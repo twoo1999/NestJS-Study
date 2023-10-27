@@ -9,9 +9,10 @@ import { CatsModule } from './cats/cats.module';
 import { LoggerMiddleware, logger } from './middleware/logger.middleware';
 import { CatsController } from './cats/cats.controller';
 import { testMiddleware } from './middleware/test.middleware';
+import { TestModule } from './test/test.module';
 
 @Module({
-  imports: [CatsModule],
+  imports: [CatsModule, TestModule],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

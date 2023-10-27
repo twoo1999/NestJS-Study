@@ -1171,3 +1171,355 @@ const app = await NestFactory.create(AppModule);
 app.use(logger);
 await app.listen(3000);
 ```
+
+### Exception filter
+
+네스트는 내장 예외 레이어를 가지는데 이것은 애플리케이션에 걸쳐 처리되지 않는 예외를 다루는 역할을 한다.
+
+애플리케이션에서 예외처리가 됐다면 그 것은 이 레이어에서 발생이 되고 적절한 유저 친화적 reponse를 보낸다.
+
+별도의 설치없이 이 동작은 내장 전역 예외 필터에의해 동작되고 HttpException타입의 예외를 처리한다.
+
+에외가 인식되지 않았을 때(HttpException이 아니거나 HttpException을 상속받은 클래스가 아닐 때) 내장 예외 필터는 밑의 응답을 생성합니다.
+
+```
+{
+  "statusCode": 500,
+  "message": "Internal server error"
+}
+```
+
+힌트
+글로벌 예외 필터는 http-errors라이브러리를 부분적으로 지원합니다.
+
+기본적으로 statuscode 및 message 속성을 포함하는 모든 발생한 에외는 정확하게 처리되고 응답으로 전송합니다.
+
+### Throwing standard exceptions
+
+네스트는 내장 httpexceoption 클래스를 제공합니다. 특정 REST/GraphQL API를 기반으로 하는 애플리케이션의 경우 에러가 발생했을 시
+표준 HTTP 응답 객체를 보내는 것이 가장 좋은 방법이다.
+
+예를 들어 CatsController에서 에러를 하드코딩으로 발생시키는 상황이다
+
+```
+@Get()
+async findAll() {
+  throw new HttpException('Forbidden', HttpStatus.FORBIDDEN);
+}
+```
+
+```
+{
+  "statusCode": 403,
+  "message": "Forbidden"
+}
+```
+
+HttpException 은 2개의 매개변수를 전달 받는데 이는 응답을 결정한다.
+
+- reponse 매개변수는 JSON 응답 body를 결정한다. string, object일 수 있다.
+- status 매개변수는 status code를 결정한다.
+
+기본적으로 바디는 두개의 요소를 포함한다.
+
+- statusCode : status 매개변수에 의해 결정되는 부분
+- message : status에 기반한 짧은 메세지
+
+제이슨 응답 바디의 메세지 부분을 오버라이딩하고 싶다면 reponse 매개변수에 string을 제공한다.
+제이슨 응답 바디의 전체적인 부분을 오버라이딩하고 싶다면 reponjse 매개변수에 객체를 전달한다.
+네스트는 객체를 직렬화시키고 제이슨 reposne 바디로 반환한다.
+
+두번째 매개변수인 status 유효한 http 상태 코드여야한다.
+네스트에서 정의된 열거형을 사용하는 것이 베스트다
+
+3번쨰 매개변수가 있는데 선택이다.
+
+- options
+  에러 원인를 제공하기 위해 사용
+  이 원인 객체는 직렬화되지 않는다. 응답 객체 안에서
+  로깅 목적으로 사용한다.http 예외가 발생됐을 때 내부 에러에 대한 정보를 제공하기 위해
+
+```
+@Get()
+async findAll() {
+  try {
+    await this.service.findAll()
+  } catch (error) {
+    throw new HttpException({
+      status: HttpStatus.FORBIDDEN,
+      error: 'This is a custom message',
+    }, HttpStatus.FORBIDDEN, {
+      cause: error
+    });
+  }
+}
+```
+
+```
+{
+  "status": 403,
+  "error": "This is a custom message"
+}
+
+```
+
+### Custom exceptions
+
+많은 경우에서 커스텀 예외 처리가 필요없거나 내장 예외 처리를 할 수 있습니다. 그러나 만약 커스텀 예외처리가 필요하다면 HttpException 클래스를 상속하는 커스텀 예외 계층 구조를 가지는 것도 좋습니다.
+
+이러한 접근과 함께 네스트가 커스텀 예외처리를 인식할 수 있고 자동적으로 에러 응답을 처리할 수 있다.
+
+```
+export class ForbiddenException extends HttpException {
+  constructor() {
+    super('Forbidden', HttpStatus.FORBIDDEN);
+  }
+}
+```
+
+### Built-in HTTP exceptions
+
+참고
+
+https://docs.nestjs.com/exception-filters
+
+```
+throw new BadRequestException('Something bad happened', { cause: new Error(), description: 'Some error description' })
+```
+
+```
+{
+  "message": "Something bad happened",
+  "error": "Some error description",
+  "statusCode": 400,
+}
+
+```
+
+### Exception filters
+
+대부분의 내장 예외 필터가 자동적으로 많은 경우를 커버하지만 예외 레이어를 전체적으로 컨트롤하고 싶을 수 도 있다.
+
+예를 들어 로깅시스템을 추가하고 싶을 수도 있고, 동적인 요인에 따라 다른 json 스키마를 사용하고 싶은 경우도 있다.
+
+예외 필터는 이러한 경우를 위해 만들어졌다.
+
+예외 필터는 특정 컨트롤 플로우를 제어할 수 있도록 해주고 또한, 클라이언트로의 응답에 대한 내용을 제어할 수 있도록 한다.
+
+HttpException클래스의 인스턴스인 예외를 잡는 기능을 가진 예외 필터를 만들자, 그리고 커스텀 응답 로직을 추가하자
+
+이걸 위해 응답, 요청의 기반하는 플랫폼에 접근해야한다.
+
+우리는 요청 객체에 접근하고 그래서 우리는 오리지날 url을 가져올 수 있다. 또한 로깅 정보에 이 url을 추가할 수 있다.
+
+response.json() 메서드를 사용해서 보내지는 응답 객체에 대해 직접적인 제어를 할 수 있도록 응답 객체를 사용한다.
+
+```
+import { ExceptionFilter, Catch, ArgumentsHost, HttpException } from '@nestjs/common';
+import { Request, Response } from 'express';
+
+@Catch(HttpException)
+export class HttpExceptionFilter implements ExceptionFilter {
+  catch(exception: HttpException, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const response = ctx.getResponse<Response>();
+    const request = ctx.getRequest<Request>();
+    const status = exception.getStatus();
+
+    response
+      .status(status)
+      .json({
+        statusCode: status,
+        timestamp: new Date().toISOString(),
+        path: request.url,
+      });
+  }
+}
+```
+
+힌트
+모든 예외 필터는 generic ExceptionFilter<T> 인터페이스를 포함합니다.
+
+이것은 지정된 타입과 함께 catch 메서드를 제공할 수 있도록 합니다.
+
+catch 데코레이터는 예외 필터와 필요한 메타데이터를 bind해줍니다. 그리고 네스트에게 이 특정한 필터는 HttpException 타입의 예외만 감시하고 나머지는 안한다는 말입니다.
+
+catch는 하나의 매개변수 혹은 ,로 구분된 리스트를 받을 수 있다. 이것은 여러 타입의 예외를 한번에 셋업할 수 있도록 해준다.
+
+### Argument host
+
+catch의 파라미터를 보면
+
+exception 매개변수는 현재 처리중인 옝되 객체입니다.
+
+host는 ArgumentHost의 객체입니다,
+
+이것은 매우 강력한 유틸리티 객체 입니다. 추후 execution context chapter에서 설명
+
+이 샘플에서 보면
+
+우리는 오리지널 요청 핸들러(예외가 발생한)에 전달되는 요청, 응답 객체에 대한 참조를 포함하기 위해 사용합니다.
+
+예제에서는 원하는 요청 및 응답 객체를 얻기 위해 argumenthost의 헬퍼 메서드를 사용햇따,.
+
+더욱 자세한건 argumenthost를 참고
+
+이 추상화 수준의 이유는 모든 컨텍스트에서 작동하기 때문
+
+실행 컨텍스트 챕터에서는 host와 그 도우미 함수ㅡ의 능력을 활용해 모든 실행 컨테긋트에 대한 적절한 액세스 방법을 본다.
+
+ArgumentsHost와 그 도우미 함수의 추상화 수준은 다양한 실행 컨텍스트에서 예외 처리를 일반화하고 코드의 재사용성을 높이기 위해 사용됩니다. 예를 들어, HTTP 서버, Microservices, WebSockets와 같은 다양한 컨텍스트에서 예외를 처리할 때 동일한 패턴을 사용할 수 있게 해줍니다. 이것은 Nest.js에서 예외 필터를 작성할 때 코드를 표준화하고 보다 유연한 방식으로 다양한 실행 환경에서 동작하게 할 수 있습니다.
+
+chatgpt
+
+### binding filters
+
+```
+@Post()
+@UseFilters(new HttpExceptionFilter())
+async create(@Body() createCatDto: CreateCatDto) {
+  throw new ForbiddenException();
+}
+```
+
+catch와 비슷하게 하나 이상의 필터 인스턴스를 받을 수 있다,.
+
+또한 인스턴스를 직접 생성하는 것이 아닌 클래스를 전달하고 의존성을 주입하는 방법도 있다.
+
+클래스 -> 의존성 주입을 자동으로 처리
+인스턴스 -> 요청 간 완벽한 분리를 원할 때 사용 격리된 필터동작
+
+하나의 메서드가 아닌 범위를 다르게 하고 싶다면 아래와 같이
+
+```
+@UseFilters(new HttpExceptionFilter())
+export class CatsController {}
+```
+
+글로벌 선언
+
+```
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  app.useGlobalFilters(new HttpExceptionFilter());
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+다만 전역 필터는 의존성 주입이 안되는 데 이는 밑과 같이 해결 가능
+
+```
+import { Module } from '@nestjs/common';
+import { APP_FILTER } from '@nestjs/core';
+
+@Module({
+  providers: [
+    {
+      provide: APP_FILTER,
+      useClass: HttpExceptionFilter,
+    },
+  ],
+})
+export class AppModule {}
+```
+
+이 방법을 사용하여 필터에 대한 의존성 주입을 수행할 때, 이 구성을 사용하는 모듈의 종류와 관계없이 실제로 필터는 전역적으로 동작합니다. 즉, 필터가 어느 모듈에서 사용되는지와 관계없이 애플리케이션 전체에 적용되는 전역 필터로 작동합니다.
+
+따라서 이 구성은 필터를 정의한 모듈에서 수행하는 것이 일반적입니다. 필터가 정의된 모듈에서 필터를 등록하고 의존성을 설정하면 필터가 전역 범위에서 모든 컨트롤러와 라우트 핸들러에서 사용될 수 있게 됩니다.
+
+### Catch everything
+
+모든 다루지 않는 모든 예외를 캐치하고 싶다면 catch() 빈 상태ㄹ 둬라
+
+import {
+ExceptionFilter,
+Catch,
+ArgumentsHost,
+HttpException,
+HttpStatus,
+} from '@nestjs/common';
+import { HttpAdapterHost } from '@nestjs/core';
+
+@Catch()
+export class AllExceptionsFilter implements ExceptionFilter {
+constructor(private readonly httpAdapterHost: HttpAdapterHost) {}
+
+catch(exception: unknown, host: ArgumentsHost): void {
+// In certain situations `httpAdapter` might not be available in the
+// constructor method, thus we should resolve it here.
+const { httpAdapter } = this.httpAdapterHost;
+
+    const ctx = host.switchToHttp();
+
+    const httpStatus =
+      exception instanceof HttpException
+        ? exception.getStatus()
+        : HttpStatus.INTERNAL_SERVER_ERROR;
+
+    const responseBody = {
+      statusCode: httpStatus,
+      timestamp: new Date().toISOString(),
+      path: httpAdapter.getRequestUrl(ctx.getRequest()),
+    };
+
+    httpAdapter.reply(ctx.getResponse(), responseBody, httpStatus);
+
+}
+}
+아래의 예시 코드에서는 HTTP 어댑터를 사용하여 응답을 처리하므로, 플랫폼에 독립적입니다. 이 코드에서는 플랫폼 특정 객체 (Request 및 Response)를 직접 사용하지 않고 HTTP 어댑터를 통해 응답을 처리하므로 어떤 플랫폼에서든 동일한 방식으로 동작할 수 있습니다.
+
+일반적으로, 애플리케이션 요구사항을 충족시키기 위해 완전히 사용자 정의된 예외 필터를 생성할 것입니다. 그러나 특정한 상황에 기반하여 행동을 재정의하고자 할 때 내장된 기본 전역 예외 필터를 확장하고 싶을 수 있는 경우도 있습니다.
+
+내장된 기본 필터로 예외 처리를 위임하려면 BaseExceptionFilter를 확장하고 상속된 catch() 메서드를 호출해야 합니다. 이렇게 하면 예외 처리를 내장 필터에 위임할 수 있습니다.
+
+예를 들어, 모든 종류의 예외를 처리하는 AllExceptionsFilter를 생성하고 BaseExceptionFilter를 확장한 경우:
+
+javascript
+Copy code
+import { Catch, ArgumentsHost } from '@nestjs/common';
+import { BaseExceptionFilter } from '@nestjs/core';
+
+@Catch()
+export class AllExceptionsFilter extends BaseExceptionFilter {
+catch(exception: unknown, host: ArgumentsHost) {
+super.catch(exception, host);
+}
+}
+Global 범위의 필터는 기본 필터를 확장할 수 있으며, 이는 두 가지 방법으로 수행할 수 있습니다.
+
+첫 번째 방법은 사용자 정의 글로벌 필터를 인스턴스화할 때 HttpAdapter 참조를 주입하는 것입니다:
+
+javascript
+Copy code
+async function bootstrap() {
+const app = await NestFactory.create(AppModule);
+
+const { httpAdapter } = app.get(HttpAdapterHost);
+app.useGlobalFilters(new AllExceptionsFilter(httpAdapter));
+
+await app.listen(3000);
+}
+bootstrap();
+두 번째 방법은 APP_FILTER 토큰을 사용하는 것입니다.
+
+APP_FILTER는 Nest.js에서 사용되는 특수한 프로바이더 토큰(token) 중 하나입니다. 이 토큰을 사용하여 애플리케이션 레벨에서 예외 필터(Exception Filter)를 등록할 수 있습니다.
+
+예외 필터는 예외가 발생했을 때 처리하고 사용자 정의된 응답을 생성하는 데 사용됩니다. APP_FILTER 토큰을 사용하여 이러한 예외 필터를 애플리케이션 전역 레벨에서 설정할 수 있습니다. 이렇게 설정한 필터는 애플리케이션의 모든 컨트롤러와 라우트 핸들러에서 발생하는 예외를 처리합니다.
+
+일반적으로 APP_FILTER를 사용하여 전역 예외 필터를 설정하고, 필터 클래스를 해당 토큰과 연결시킵니다. 이렇게 하면 애플리케이션에서 발생하는 모든 예외에 대한 일관된 처리를 구현할 수 있습니다.
+
+예를 들어:
+
+javascript
+Copy code
+@Module({
+providers: [
+{
+provide: APP_FILTER,
+useClass: MyExceptionFilter,
+},
+],
+})
+export class AppModule {}
+위 코드에서는 APP_FILTER 토큰을 사용하여 MyExceptionFilter 클래스를 애플리케이션의 예외 필터로 등록하고 있습니다. 이렇게 하면 MyExceptionFilter 클래스가 애플리케이션의 모든 예외를 처리하는 전역 예외 필터로 동작합니다.
